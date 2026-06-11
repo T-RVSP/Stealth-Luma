@@ -1,0 +1,35 @@
+# Created by https://www.gitignore.io/api/visualstudiocode
+# Edit at https://www.gitignore.io/?templates=visualstudiocode
+
+### VisualStudioCode ###
+.vscode/*
+
+### VisualStudioCode Patch ###
+# Ignore all local history of files
+.history
+
+# End of https://www.gitignore.io/api/visualstudiocode
+
+*.spec
+*.bat
+build.ps1
+stealth_luma.iss
+*.log
+*.pyc
+dist/*
+!dist/installer/.gitkeep
+build/*
+installer/
+__pycache__/
+env/
+
+# Installation GreenLuma portable (généré localement)
+GLinject/*
+!GLinject/.gitkeep
+
+# GLMUpdater
+GLMUpdater/.vs
+GLMUpdater/bin
+GLMUpdater/obj
+GLMUpdater/packages
+GLMUpdater/*.csproj.user
