@@ -771,18 +771,6 @@ QPushButton#tray_btn_quit:hover {{
 QPushButton#tray_btn_quit:pressed {{
     background-color: rgba(240, 113, 120, 0.2);
 }}
-
-QLabel#tray_menu_title {{
-    color: {c.TEXT};
-    font-size: 10pt;
-    font-weight: 700;
-}}
-
-QLabel#tray_menu_subtitle {{
-    color: {c.TEXT_MUTED};
-    font-size: 8pt;
-    font-weight: 500;
-}}
 """
 
 

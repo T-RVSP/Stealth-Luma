@@ -43,6 +43,8 @@ class MainWindow(QMainWindow):
         self.profile_games_thread = None
         self.extract_greenluma_thread = None
         self.steam_downgrade_thread = None
+        self.installed_profiles_sync_thread = None
+        self.reload_steam_profiles_thread = None
         self.steam_restore_thread = None
         self.update_check_thread = None
         self.update_download_thread = None
@@ -80,27 +82,10 @@ class MainWindow(QMainWindow):
             return
 
         self.tray_icon = QSystemTrayIcon(icon, QApplication.instance())
-        self.tray_icon.setToolTip(
-            "{0} — {1}".format(core.APP_NAME, i18n.tr("tray_running"))
-        )
+        self.tray_icon.setToolTip(core.APP_NAME)
         self.tray_menu = QMenu()
         self.tray_menu.setObjectName("tray_menu")
         self.tray_menu.setStyleSheet(tray_menu_stylesheet())
-
-        header_widget = QWidget()
-        header_layout = QVBoxLayout(header_widget)
-        header_layout.setContentsMargins(14, 10, 14, 4)
-        header_layout.setSpacing(2)
-        self.tray_menu_title = QLabel(core.APP_NAME)
-        self.tray_menu_title.setObjectName("tray_menu_title")
-        self.tray_menu_subtitle = QLabel(i18n.tr("tray_running"))
-        self.tray_menu_subtitle.setObjectName("tray_menu_subtitle")
-        header_layout.addWidget(self.tray_menu_title)
-        header_layout.addWidget(self.tray_menu_subtitle)
-        header_action = QWidgetAction(self)
-        header_action.setDefaultWidget(header_widget)
-        self.tray_menu.addAction(header_action)
-        self.tray_menu.addSeparator()
 
         self.tray_open_btn = self._create_tray_menu_button(
             i18n.tr("tray_open"), "tray_btn_open", self.show_from_tray
@@ -143,14 +128,15 @@ class MainWindow(QMainWindow):
                 self.toggle_widget(overlay, True)
         self._in_tray = True
         self.tray_icon.show()
-        self.tray_icon.showMessage(
-            core.APP_NAME,
-            i18n.tr("tray_minimized_body"),
-            self._app_icon(),
-            5000,
-        )
         QApplication.processEvents()
         self.hide()
+        if self.tray_icon.supportsMessages():
+            self.tray_icon.showMessage(
+                i18n.tr("tray_running"),
+                i18n.tr("tray_minimized_body"),
+                QSystemTrayIcon.Information,
+                5000,
+            )
         logging.info("Application réduite dans la zone de notification")
 
     def show_from_tray(self):
@@ -222,13 +208,8 @@ class MainWindow(QMainWindow):
         self.setup_editor_table()
         self.setup_steam_path()
         self.sync_steam_profiles()
-        current_profile = self.main_window.profile_selector.currentText()
-        if current_profile and current_profile in profile_manager.profiles:
-            profile = profile_manager.profiles[current_profile]
-            self.show_profile_games(profile)
-            self.update_profile_toolbar(profile)
-            if core.is_game_profile(profile):
-                self.sync_applist_for_profile(profile)
+        core.ensure_steam_profile_links(profile_manager, core.config.steam_path)
+        self.apply_startup_profile()
         self.setup_greenluma_path()
         if core.glinject_extract_was_blocked():
             self.show_popup(
@@ -271,6 +252,7 @@ class MainWindow(QMainWindow):
         ui.generate_btn.hide()
         ui.cancel_profile_btn.setText(i18n.tr("cancel"))
         ui.label_profile_name.setText(i18n.tr("installed_game"))
+        ui.profile_name.setPlaceholderText(i18n.tr("profile_name_ph"))
         ui.create_profile_btn.setText(i18n.tr("create_profile_btn"))
         ui.save_steam_path.setText(i18n.tr("save"))
         ui.cancel_steam_path_btn.setText(i18n.tr("cancel"))
@@ -300,16 +282,12 @@ class MainWindow(QMainWindow):
             self.tray_open_btn.setText(i18n.tr("tray_open"))
         if hasattr(self, "tray_close_btn"):
             self.tray_close_btn.setText(i18n.tr("tray_close"))
-        if hasattr(self, "tray_menu_subtitle"):
-            self.tray_menu_subtitle.setText(i18n.tr("tray_running"))
         if hasattr(self, "tray_icon"):
-            self.tray_icon.setToolTip(
-                "{0} — {1}".format(core.APP_NAME, i18n.tr("tray_running"))
-            )
+            self.tray_icon.setToolTip(core.APP_NAME)
         self._layout_builder.apply_language()
         self._refresh_editor_table_labels()
         self.refresh_steam_settings_status()
-        profile_name = ui.profile_selector.currentText()
+        profile_name = self._get_selected_profile_name()
         if profile_name in profile_manager.profiles:
             self.show_profile_games(profile_manager.profiles[profile_name])
             self.update_profile_toolbar(profile_manager.profiles[profile_name])
@@ -334,14 +312,14 @@ class MainWindow(QMainWindow):
         table.viewport().update()
 
     def maybe_run_initial_steam_downgrade(self):
-        if core.config.steam_downgrade_done:
+        if not core.needs_steam_downgrade(core.config):
             return False
         if not core.is_valid_steam_path(core.config.steam_path):
             return False
         if self.steam_downgrade_thread is not None and self.steam_downgrade_thread.isRunning():
             return False
 
-        logging.info("Downgrade Steam automatique (premier lancement)")
+        logging.info("Mise à jour Steam requise (steam.cfg absent)")
         self.steam_downgrade_thread = SteamDowngradeThread(core.DEFAULT_STEAM_DOWNGRADE_URL)
         self.steam_downgrade_thread.signal.connect(self.on_initial_steam_downgrade_finished)
         self.steam_downgrade_thread.start()
@@ -354,6 +332,7 @@ class MainWindow(QMainWindow):
 
         with core.get_config() as config:
             config.steam_downgrade_done = True
+            config.steam_downgrade_url = result
 
         logging.info("Downgrade Steam automatique terminé : %s", result)
         self.refresh_steam_settings_status()
@@ -373,12 +352,10 @@ class MainWindow(QMainWindow):
 
     def connect_components(self):
         # Profils
-        self.main_window.profile_selector.currentTextChanged.connect(self.select_profile)
-        self.main_window.create_profile.clicked.connect(self.show_create_profile_dialog)
-        self.main_window.create_profile_btn.clicked.connect(self.create_profile)
-        self.main_window.cancel_profile_btn.clicked.connect(
-            lambda: self.toggle_widget(self.main_window.profile_create_window, True)
-        )
+        self.main_window.profile_selector.currentIndexChanged.connect(self._on_profile_selector_changed)
+        self.main_window.create_profile.clicked.connect(self.on_create_profile_clicked)
+        self.main_window.create_profile_btn.clicked.connect(self.on_create_profile_btn_clicked)
+        self.main_window.cancel_profile_btn.clicked.connect(self._close_profile_create_dialog)
         self.main_window.delete_profile.clicked.connect(self.confirm_delete_profile)
         self.main_window.remove_game.clicked.connect(self.remove_selected)
 
@@ -401,7 +378,7 @@ class MainWindow(QMainWindow):
         self.main_window.search_result.clicked.connect(self._edit_table_on_click)
 
         self._layout_builder.load_installed_btn.clicked.connect(self.load_selected_game_configuration)
-        self.main_window.games_list.itemSelectionChanged.connect(self._update_load_button_state)
+        self.main_window.games_list.itemSelectionChanged.connect(self._on_games_list_selection_changed)
 
         # Main Buttons
         self.main_window.run_GreenLuma_btn.clicked.connect(self.run_GreenLuma)
@@ -416,6 +393,26 @@ class MainWindow(QMainWindow):
         self._layout_builder.lang_en_btn.clicked.connect(lambda: self.set_language("en"))
 
     # Profile Functions
+    def _get_selected_profile_name(self):
+        selector = self.main_window.profile_selector
+        index = selector.currentIndex()
+        if index < 0:
+            return ""
+        data = selector.itemData(index)
+        if data:
+            return str(data)
+        return selector.currentText().strip()
+
+    def _set_selected_profile_name(self, name):
+        if not name:
+            return
+        selector = self.main_window.profile_selector
+        for index in range(selector.count()):
+            data = selector.itemData(index)
+            if data and str(data) == name:
+                selector.setCurrentIndex(index)
+                return
+
     def sync_steam_profiles(self):
         if not core.is_valid_steam_path(core.config.steam_path):
             self.refresh_profile_selector()
@@ -438,9 +435,66 @@ class MainWindow(QMainWindow):
                         config.last_profile = ""
 
         self.refresh_profile_selector()
+        self._start_installed_profiles_sync()
+        core.ensure_steam_profile_links(profile_manager, core.config.steam_path)
         return synced
 
+    def apply_startup_profile(self):
+        default_name = core.get_default_steam_profile_name(
+            profile_manager, core.config.steam_path
+        )
+        if default_name and default_name in profile_manager.profiles:
+            with core.get_config() as config:
+                config.last_profile = default_name
+            self.refresh_profile_selector()
+            self._set_selected_profile_name(default_name)
+            self.select_profile(default_name)
+            return
+
+        current_profile = self._get_selected_profile_name()
+        if current_profile and current_profile in profile_manager.profiles:
+            profile = profile_manager.profiles[current_profile]
+            self.show_profile_games(profile)
+            self.update_profile_toolbar(profile)
+            if core.is_game_profile(profile):
+                self.sync_applist_for_profile(profile)
+
+    def _start_installed_profiles_sync(self):
+        if not core.is_valid_steam_path(core.config.steam_path):
+            return
+        if self.installed_profiles_sync_thread is not None and self.installed_profiles_sync_thread.isRunning():
+            return
+
+        self.installed_profiles_sync_thread = SyncInstalledGameProfilesThread(core.config.steam_path)
+        self.installed_profiles_sync_thread.signal.connect(self.on_installed_profiles_synced)
+        self.installed_profiles_sync_thread.start()
+
+    def on_installed_profiles_synced(self, result):
+        if isinstance(result, Exception):
+            logging.exception(result)
+            return
+
+        if not result:
+            return
+
+        core.ensure_steam_profile_links(profile_manager, core.config.steam_path)
+        self.refresh_profile_selector()
+        current = self._get_selected_profile_name()
+        if current in profile_manager.profiles:
+            profile = profile_manager.profiles[current]
+            self.show_profile_games(profile)
+            self.update_profile_toolbar(profile)
+
+    def _on_profile_selector_changed(self, index):
+        if index < 0:
+            return
+        name = self._get_selected_profile_name()
+        if name:
+            self.select_profile(name)
+
     def select_profile(self, name):
+        if isinstance(name, int):
+            name = self._get_selected_profile_name()
         if not name or name not in profile_manager.profiles:
             return
 
@@ -453,20 +507,40 @@ class MainWindow(QMainWindow):
         if core.is_game_profile(profile):
             self.sync_applist_for_profile(profile)
 
-    def update_profile_toolbar(self, profile):
-        is_steam = core.is_steam_account_profile(profile)
-        load_btn = self._layout_builder.load_installed_btn
-        load_btn.setVisible(not is_steam)
-        self.main_window.create_profile.setEnabled(True)
-        self.main_window.delete_profile.setVisible(not is_steam)
+    def _reset_profile_create_dialog(self):
+        self.main_window.profile_name.show()
+        self._layout_builder.profile_game_list.hide()
+        self.main_window.label_profile_name.setText(i18n.tr("installed_game"))
+        self.main_window.create_profile_btn.setText(i18n.tr("create_profile_btn"))
+
+    def _close_profile_create_dialog(self):
+        self._reset_profile_create_dialog()
+        self.toggle_widget(self.main_window.profile_create_window, True)
+
+    def on_create_profile_clicked(self):
+        self.show_create_profile_dialog()
+
+    def _on_games_list_selection_changed(self):
         self._update_load_button_state()
 
+    def _parse_linked_profile_name(self, item_text):
+        if not item_text:
+            return ""
+        if " (" in item_text and item_text.endswith(")"):
+            return item_text.rsplit(" (", 1)[0]
+        return item_text
+
     def _update_load_button_state(self):
-        profile_name = self.main_window.profile_selector.currentText()
+        profile_name = self._get_selected_profile_name()
         profile = profile_manager.profiles.get(profile_name)
         load_btn = self._layout_builder.load_installed_btn
-        if not profile or core.is_steam_account_profile(profile):
+        if not profile:
             load_btn.setEnabled(False)
+            return
+
+        if core.is_steam_account_profile(profile):
+            load_btn.setEnabled(core.is_valid_steam_path(core.config.steam_path))
+            load_btn.setToolTip(i18n.tr("load_tooltip_steam"))
             return
 
         selected_game = self._get_selected_main_game()
@@ -483,147 +557,137 @@ class MainWindow(QMainWindow):
             load_btn.setEnabled(False)
             load_btn.setToolTip(i18n.tr("load_tooltip_no_profile", selected_game.name))
 
-    def _get_selected_main_game(self):
-        items = self.main_window.games_list.selectedItems()
-        if not items:
-            return None
+    def update_profile_toolbar(self, profile):
+        load_btn = self._layout_builder.load_installed_btn
+        load_btn.setVisible(True)
+        self.main_window.create_profile.setEnabled(True)
+        self.main_window.create_profile.setText(i18n.tr("create_profile"))
+        self.main_window.delete_profile.setVisible(
+            core.can_delete_profile(profile, core.config.steam_path)
+        )
+        load_btn.setText(i18n.tr("load"))
+        self._update_load_button_state()
 
-        profile_name = self.main_window.profile_selector.currentText()
+    def _get_selected_main_game(self):
+        profile_name = self._get_selected_profile_name()
         profile = profile_manager.profiles.get(profile_name)
         if not profile:
             return None
 
-        label = items[0].text().replace(i18n.tr("dlc_suffix"), "")
-        for game in profile.games:
-            if game.type == "Game" and game.name == label:
-                return game
+        items = self.main_window.games_list.selectedItems()
+        if items and i18n.tr("dlc_suffix") not in items[0].text():
+            label = items[0].text()
+            for game in profile.games:
+                if game.type == "Game" and game.name == label:
+                    return game
 
-        main_game = core.get_profile_main_game(profile, core.config.steam_path)
-        if main_game and main_game.name == label:
-            return main_game
+            main_game = core.get_profile_main_game(profile, core.config.steam_path)
+            if main_game and main_game.name == label:
+                return main_game
+
+        if core.is_game_profile(profile):
+            return core.get_profile_main_game(profile, core.config.steam_path)
 
         return None
 
     def show_profile_games(self, profile):
         list_ = self.main_window.games_list
-        self.populate_list(list_, profile.games)
+        list_.blockSignals(True)
+        try:
+            if core.is_steam_account_profile(profile):
+                list_.clear()
+                linked = getattr(profile, "linked_game_profiles", [])
+                launch_games = core.merge_linked_profile_games(profile, profile_manager)
+                count = len(launch_games)
+                if count > core.APPLIST_MAX_ENTRIES:
+                    suffix = i18n.tr("active_games_over_limit", core.APPLIST_MAX_ENTRIES)
+                elif count == core.APPLIST_MAX_ENTRIES:
+                    suffix = i18n.tr("active_games_at_limit", core.APPLIST_MAX_ENTRIES)
+                else:
+                    suffix = i18n.tr("active_games_count", count, core.APPLIST_MAX_ENTRIES)
+                self.main_window.label_games_list.setText(
+                    "{0}{1}".format(i18n.tr("steam_launch_profiles"), suffix)
+                )
+                for linked_name in linked:
+                    child = profile_manager.profiles.get(linked_name)
+                    if not child:
+                        continue
+                    list_.addItem(
+                        "{0} ({1})".format(linked_name, len(child.games))
+                    )
+                if list_.count() > 0:
+                    list_.setCurrentRow(0)
+                return
 
-        if core.is_steam_account_profile(profile):
-            self.main_window.label_games_list.setText(i18n.tr("family_mode"))
-            return
+            self.populate_list(list_, profile.games)
 
-        count = len(profile.games)
-        if count > core.APPLIST_MAX_ENTRIES:
-            suffix = i18n.tr("active_games_over_limit", core.APPLIST_MAX_ENTRIES)
-        elif count == core.APPLIST_MAX_ENTRIES:
-            suffix = i18n.tr("active_games_at_limit", core.APPLIST_MAX_ENTRIES)
-        else:
-            suffix = i18n.tr("active_games_count", count, core.APPLIST_MAX_ENTRIES)
-        self.main_window.label_games_list.setText("{0}{1}".format(i18n.tr("active_games"), suffix))
+            count = len(profile.games)
+            if count > core.APPLIST_MAX_ENTRIES:
+                suffix = i18n.tr("active_games_over_limit", core.APPLIST_MAX_ENTRIES)
+            elif count == core.APPLIST_MAX_ENTRIES:
+                suffix = i18n.tr("active_games_at_limit", core.APPLIST_MAX_ENTRIES)
+            else:
+                suffix = i18n.tr("active_games_count", count, core.APPLIST_MAX_ENTRIES)
+            self.main_window.label_games_list.setText("{0}{1}".format(i18n.tr("active_games"), suffix))
 
-        main_game = core.get_profile_main_game(profile, core.config.steam_path)
-        if main_game:
-            for index in range(list_.count()):
-                item = list_.item(index)
-                if item.text().replace(i18n.tr("dlc_suffix"), "") == main_game.name and i18n.tr("dlc_suffix") not in item.text():
-                    list_.setCurrentItem(item)
-                    break
+            main_game = core.get_profile_main_game(profile, core.config.steam_path)
+            if main_game:
+                for index in range(list_.count()):
+                    item = list_.item(index)
+                    if item.text().replace(i18n.tr("dlc_suffix"), "") == main_game.name and i18n.tr("dlc_suffix") not in item.text():
+                        list_.setCurrentItem(item)
+                        break
+        finally:
+            list_.blockSignals(False)
+
+        self._update_load_button_state()
+
+    def on_create_profile_btn_clicked(self):
+        self.create_profile()
 
     def show_create_profile_dialog(self):
-        if not core.is_valid_steam_path(core.config.steam_path):
-            self.show_popup(i18n.tr("invalid_steam_path"))
-            return
-
-        game_list = self._layout_builder.profile_game_list
-        game_list.clear()
-        game_list.addItem(i18n.tr("loading_installed_games"))
-        self.main_window.create_profile_btn.setEnabled(False)
+        self._reset_profile_create_dialog()
+        self.main_window.profile_name.clear()
+        self.main_window.create_profile_btn.setEnabled(True)
         self.toggle_widget(self.main_window.profile_create_window)
 
-        self.profile_games_thread = InstalledBaseGamesThread(core.config.steam_path)
-        self.profile_games_thread.signal.connect(self.on_profile_games_loaded)
-        self.profile_games_thread.start()
-
-    def on_profile_games_loaded(self, games):
-        game_list = self._layout_builder.profile_game_list
-        game_list.clear()
-        self.main_window.create_profile_btn.setEnabled(True)
-
-        if isinstance(games, Exception):
-            logging.exception(games)
-            self.show_popup(i18n.tr("cannot_list_games"))
-            self.toggle_widget(self.main_window.profile_create_window, True)
-            return
-
-        available = []
-        for game in games:
-            if core.find_game_profile(profile_manager, game):
-                continue
-            available.append(game)
-
-        if not available:
-            game_list.addItem(i18n.tr("all_games_have_profile"))
-            self.main_window.create_profile_btn.setEnabled(False)
-            return
-
-        for game in available:
-            item = QListWidgetItem(game.name)
-            item.setData(Qt.UserRole, game)
-            game_list.addItem(item)
-
     def create_profile(self):
-        game_list = self._layout_builder.profile_game_list
-        item = game_list.currentItem()
-        if not item:
-            self.show_popup(i18n.tr("select_installed_game"))
+        name = self.main_window.profile_name.text().strip()
+        if not name:
+            self.show_popup(i18n.tr("profile_name_required"))
             return
 
-        game = item.data(Qt.UserRole)
-        if not isinstance(game, core.Game):
-            self.show_popup(i18n.tr("select_installed_game"))
-            return
-
-        if profile_manager.profile_exists(game.name) or core.find_game_profile(profile_manager, game):
-            self.show_popup(i18n.tr("profile_exists", game.name))
-            return
-
-        if not profile_manager.create_profile(
-            game.name,
-            games=[game],
-            source_app_id=game.id,
+        if profile_manager.profile_exists(name) or core.find_game_profile(
+            profile_manager, core.Game("", name, "Game")
         ):
+            self.show_popup(i18n.tr("profile_exists", name))
+            return
+
+        if not profile_manager.create_profile(name, games=[], source_app_id=""):
             self.show_popup(i18n.tr("cannot_create_profile"))
             return
 
         with core.get_config() as config:
-            config.last_profile = game.name
+            config.last_profile = name
 
         self.refresh_profile_selector()
-        self.main_window.profile_selector.setCurrentText(game.name)
-        self.toggle_widget(self.main_window.profile_create_window, True)
-
-        ui = self.main_window
-        ui.create_profile_btn.setEnabled(False)
-        ui.create_profile_btn.setText(i18n.tr("importing"))
-        self.main_window.label_games_list.setText(i18n.tr("creating_profile_dlc", game.name))
-
-        self.load_game_config_thread = LoadGameConfigurationThread(
-            core.config.steam_path,
-            game.id,
-            game.name,
-            game.name,
-        )
-        self.load_game_config_thread.signal.connect(self.on_game_configuration_loaded)
-        self.load_game_config_thread.start()
+        self._set_selected_profile_name(name)
+        self._close_profile_create_dialog()
+        profile = profile_manager.profiles[name]
+        core.ensure_steam_profile_links(profile_manager, core.config.steam_path)
+        self.show_profile_games(profile)
+        self.update_profile_toolbar(profile)
 
     def confirm_delete_profile(self):
-        name = self.main_window.profile_selector.currentText()
+        name = self._get_selected_profile_name()
         if not name or name not in profile_manager.profiles:
             return
 
         profile = profile_manager.profiles[name]
         if core.is_steam_account_profile(profile):
             self.show_popup(i18n.tr("steam_profile_no_delete"))
+            return
+        if core.is_installed_game_profile(profile, core.config.steam_path):
             return
 
         self.show_popup(
@@ -638,8 +702,13 @@ class MainWindow(QMainWindow):
 
         if core.is_steam_account_profile(profile_manager.profiles[name]):
             return
+        if core.is_installed_game_profile(
+            profile_manager.profiles[name], core.config.steam_path
+        ):
+            return
 
         profile_manager.remove_profile(name)
+        core.remove_game_profile_from_steam_links(profile_manager, name)
 
         with core.get_config() as config:
             if config.last_profile == name:
@@ -650,7 +719,7 @@ class MainWindow(QMainWindow):
 
         self.refresh_profile_selector()
         if profile_manager.profiles:
-            selected = self.main_window.profile_selector.currentText()
+            selected = self._get_selected_profile_name()
             if selected in profile_manager.profiles:
                 profile = profile_manager.profiles[selected]
                 self.show_profile_games(profile)
@@ -664,6 +733,12 @@ class MainWindow(QMainWindow):
             self.show_popup(i18n.tr("invalid_steam_path"))
             return
 
+        profile_name = self._get_selected_profile_name()
+        profile = profile_manager.profiles.get(profile_name)
+        if profile and core.is_steam_account_profile(profile):
+            self._reload_steam_launch_profiles()
+            return
+
         selected_game = self._get_selected_main_game()
         if not selected_game:
             self.show_popup(i18n.tr("select_game_not_dlc"))
@@ -671,8 +746,16 @@ class MainWindow(QMainWindow):
 
         target_profile = core.find_game_profile(profile_manager, selected_game)
         if not target_profile:
-            self.show_popup(i18n.tr("no_profile_for_game", selected_game.name))
-            return
+            if profile_manager.create_profile(
+                selected_game.name,
+                games=[selected_game],
+                source_app_id=selected_game.id,
+            ):
+                target_profile = profile_manager.profiles[selected_game.name]
+                self.refresh_profile_selector()
+            else:
+                self.show_popup(i18n.tr("no_profile_for_game", selected_game.name))
+                return
 
         if self.load_game_config_thread and self.load_game_config_thread.isRunning():
             return
@@ -691,6 +774,61 @@ class MainWindow(QMainWindow):
         self.load_game_config_thread.signal.connect(self.on_game_configuration_loaded)
         self.load_game_config_thread.start()
 
+    def _reload_steam_launch_profiles(self):
+        profile_name = self._get_selected_profile_name()
+        profile = profile_manager.profiles.get(profile_name)
+        if not profile or not core.is_steam_account_profile(profile):
+            return
+
+        if self.reload_steam_profiles_thread and self.reload_steam_profiles_thread.isRunning():
+            return
+
+        btn = self._layout_builder.load_installed_btn
+        btn.setEnabled(False)
+        btn.setText(i18n.tr("importing"))
+        self.main_window.label_games_list.setText(i18n.tr("steam_reloading"))
+
+        self.reload_steam_profiles_thread = ReloadSteamLaunchProfilesThread(
+            core.config.steam_path,
+            profile_name,
+        )
+        self.reload_steam_profiles_thread.signal.connect(self.on_steam_launch_profiles_reloaded)
+        self.reload_steam_profiles_thread.start()
+
+    def on_steam_launch_profiles_reloaded(self, result):
+        btn = self._layout_builder.load_installed_btn
+        btn.setText(i18n.tr("load"))
+
+        profile_name = self._get_selected_profile_name()
+        profile = profile_manager.profiles.get(profile_name)
+
+        if isinstance(result, Exception):
+            logging.exception(result)
+            if profile:
+                self.show_profile_games(profile)
+                self.update_profile_toolbar(profile)
+            self.show_popup(i18n.tr("cannot_load_config"))
+            return
+
+        if not profile or profile_name not in profile_manager.profiles:
+            return
+
+        self.show_profile_games(profile)
+        self.update_profile_toolbar(profile)
+        self.sync_applist_for_profile(profile)
+
+        total_entries = len(core.merge_linked_profile_games(profile, profile_manager))
+        message = i18n.tr(
+            "steam_reload_done",
+            result.get("reloaded", 0),
+            total_entries,
+            core.APPLIST_MAX_ENTRIES,
+        )
+        errors = result.get("errors") or []
+        if errors:
+            message += "\n" + i18n.tr("steam_reload_partial", len(errors), result.get("linked", 0))
+        self.show_popup(message)
+
     def on_game_configuration_loaded(self, result):
         btn = self._layout_builder.load_installed_btn
         btn.setText(i18n.tr("load"))
@@ -699,7 +837,7 @@ class MainWindow(QMainWindow):
 
         if isinstance(result, Exception):
             logging.exception(result)
-            profile_name = self.main_window.profile_selector.currentText()
+            profile_name = self._get_selected_profile_name()
             if profile_name in profile_manager.profiles:
                 self.show_profile_games(profile_manager.profiles[profile_name])
             self.update_profile_toolbar(profile_manager.profiles.get(profile_name))
@@ -714,11 +852,19 @@ class MainWindow(QMainWindow):
             config.last_profile = profile_name
 
         self.refresh_profile_selector()
-        self.main_window.profile_selector.setCurrentText(profile_name)
-        profile = profile_manager.profiles[profile_name]
-        self.show_profile_games(profile)
-        self.update_profile_toolbar(profile)
-        self.sync_applist_for_profile(profile)
+        current_profile_name = self._get_selected_profile_name()
+        current_profile = profile_manager.profiles.get(current_profile_name)
+        if current_profile and core.is_steam_account_profile(current_profile):
+            self.show_profile_games(current_profile)
+            self.update_profile_toolbar(current_profile)
+        else:
+            self._set_selected_profile_name(profile_name)
+            profile = profile_manager.profiles[profile_name]
+            self.show_profile_games(profile)
+            self.update_profile_toolbar(profile)
+        core.ensure_steam_profile_links(profile_manager, core.config.steam_path)
+        reloaded_profile = profile_manager.profiles[profile_name]
+        self.sync_applist_for_profile(reloaded_profile)
 
         dlc_count = max(0, applied - 1)
         message = i18n.tr("profile_ready", profile_name, applied, dlc_count)
@@ -728,24 +874,23 @@ class MainWindow(QMainWindow):
 
     def refresh_profile_selector(self):
         selector = self.main_window.profile_selector
+        selected = self._get_selected_profile_name()
         selector.blockSignals(True)
         selector.clear()
 
-        profiles = sorted(profile_manager.profiles.values(), key=lambda item: item.name.lower())
-        if not profiles:
+        profile_names = core.get_ordered_profile_names(
+            profile_manager, core.config.steam_path
+        )
+        if not profile_names:
             selector.blockSignals(False)
             self.populate_list(self.main_window.games_list, [])
             return
 
-        last_profile = core.config.last_profile
-        if last_profile in profile_manager.profiles:
-            selector.addItem(last_profile)
-            for profile in profiles:
-                if profile.name != last_profile:
-                    selector.addItem(profile.name)
-        else:
-            for profile in profiles:
-                selector.addItem(profile.name)
+        for name in profile_names:
+            selector.addItem(name, name)
+
+        if selected:
+            self._set_selected_profile_name(selected)
 
         selector.blockSignals(False)
 
@@ -813,7 +958,7 @@ class MainWindow(QMainWindow):
         self.editor_model.remove_rows(rows)
 
     def add_editor_to_profile(self):
-        profile_name = self.main_window.profile_selector.currentText()
+        profile_name = self._get_selected_profile_name()
         profile = profile_manager.profiles[profile_name]
         if core.is_steam_account_profile(profile):
             self.show_popup(i18n.tr("steam_profile_family_only"))
@@ -868,9 +1013,18 @@ class MainWindow(QMainWindow):
         if len(items) == 0:
             return
 
-        profile_name = self.main_window.profile_selector.currentText()
+        profile_name = self._get_selected_profile_name()
         profile = profile_manager.profiles[profile_name]
         if core.is_steam_account_profile(profile):
+            linked_names = []
+            for item in items:
+                linked_name = self._parse_linked_profile_name(item.text())
+                if linked_name in profile.linked_game_profiles:
+                    core.exclude_game_profile_from_steam(profile, linked_name)
+                    linked_names.append(linked_name)
+            if linked_names:
+                profile.export_profile()
+                self.show_profile_games(profile)
             return
 
         for item in items:
@@ -887,6 +1041,7 @@ class MainWindow(QMainWindow):
         if widget.isHidden():
             self._load_settings_fields()
             self.refresh_steam_settings_status()
+            self.maybe_run_initial_steam_downgrade()
             self.toggle_widget(widget)
             return
 
@@ -1023,6 +1178,7 @@ class MainWindow(QMainWindow):
             self.show_popup(i18n.tr("steam_restore_failed", result))
             return
 
+        self._stealth_user32_active = False
         self.refresh_steam_settings_status()
         self.show_popup(i18n.tr("steam_restore_ok"))
 
@@ -1038,18 +1194,28 @@ class MainWindow(QMainWindow):
             self.show_greenluma_install_dialog(retry_callback=self.run_GreenLuma)
             return
 
-        profile_name = self.main_window.profile_selector.currentText()
+        if core.needs_steam_downgrade(core.config):
+            self.maybe_run_initial_steam_downgrade()
+            self.show_popup(i18n.tr("steam_downgrade_required", core.DEFAULT_STEAM_VERSION_LABEL))
+            return
+
+        profile_name = self._get_selected_profile_name()
         if profile_name not in profile_manager.profiles:
             self.show_popup(i18n.tr("no_steam_account"))
             return
 
         profile = profile_manager.profiles[profile_name]
 
-        if core.profile_exceeds_applist_limit(profile):
+        launch_games = core.get_launch_games_for_profile(profile, profile_manager)
+        if not launch_games:
+            self.show_popup(i18n.tr("steam_no_launch_entries"))
+            return
+
+        if core.profile_exceeds_applist_limit(profile, profile_manager):
             self.show_popup(
                 i18n.tr(
                     "profile_too_many_entries",
-                    len(profile.games),
+                    len(launch_games),
                     core.APPLIST_MAX_ENTRIES,
                 )
             )
@@ -1078,8 +1244,8 @@ class MainWindow(QMainWindow):
 
         try:
             core.run_delete_steam_app_cache(gl_path)
-            if profile.games:
-                self.sync_applist_for_profile(profile)
+            if launch_games:
+                core.createFiles(launch_games)
             core.deploy_stealth_files_to_steam(glinject_path=gl_path)
             self._stealth_user32_active = True
             core.launch_steam()
@@ -1102,7 +1268,7 @@ class MainWindow(QMainWindow):
             logging.info("AppList non synchronisée : chemin Steam invalide")
             return False
 
-        if core.profile_exceeds_applist_limit(profile):
+        if core.profile_exceeds_applist_limit(profile, profile_manager):
             logging.warning(
                 "AppList non synchronisée : profil %s dépasse %d entrées",
                 profile.name,
@@ -1111,14 +1277,15 @@ class MainWindow(QMainWindow):
             return False
 
         try:
-            core.createFiles(profile.games)
+            launch_games = core.get_launch_games_for_profile(profile, profile_manager)
+            core.createFiles(launch_games)
         except (OSError, RuntimeError) as err:
             logging.exception(err)
             if popup:
                 self.show_popup(i18n.tr("cannot_generate_applist"))
             return False
 
-        logging.info("AppList synchronisée dans Steam (%d entrée(s))", len(profile.games))
+        logging.info("AppList synchronisée dans Steam (%d entrée(s))", len(launch_games))
         if popup:
             self.show_popup(i18n.tr("applist_generated"))
         return True
@@ -1378,6 +1545,47 @@ class ExtractGreenLumaThread(QThread):
         try:
             core.extract_greenluma_archive(self.zip_path)
             self.signal.emit(True)
+        except Exception as err:
+            self.signal.emit(err)
+
+
+class ReloadSteamLaunchProfilesThread(QThread):
+    signal = pyqtSignal("PyQt_PyObject")
+
+    def __init__(self, steam_path, steam_profile_name):
+        super().__init__()
+        self.steam_path = steam_path
+        self.steam_profile_name = steam_profile_name
+
+    def run(self):
+        try:
+            profile = profile_manager.profiles[self.steam_profile_name]
+            result = core.refresh_steam_launch_profiles(
+                profile_manager,
+                self.steam_path,
+                profile,
+            )
+            self.signal.emit(result)
+        except Exception as err:
+            logging.exception(err)
+            self.signal.emit(err)
+
+
+class SyncInstalledGameProfilesThread(QThread):
+    signal = pyqtSignal("PyQt_PyObject")
+
+    def __init__(self, steam_path):
+        super().__init__()
+        self.steam_path = steam_path
+
+    def run(self):
+        try:
+            created = core.sync_installed_game_profiles(
+                profile_manager,
+                self.steam_path,
+                load_dlc=True,
+            )
+            self.signal.emit(created)
         except Exception as err:
             self.signal.emit(err)
 

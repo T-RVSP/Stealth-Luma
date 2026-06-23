@@ -264,11 +264,11 @@ class ModernLayoutBuilder:
     self.profile_game_list = QListWidget()
     self.profile_game_list.setObjectName("profile_game_list")
     self.profile_game_list.setMinimumHeight(220)
-    self.ui.profile_name.hide()
+    self.profile_game_list.hide()
     self._configure_form_overlay(
       self.ui.profile_create_window,
       self.ui.label_profile_name,
-      [self.profile_game_list],
+      [self.ui.profile_name, self.profile_game_list],
       [self.ui.create_profile_btn, self.ui.cancel_profile_btn],
     )
     self._configure_form_overlay(

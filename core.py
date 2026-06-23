@@ -54,7 +54,7 @@ def setup_logging():
         handlers=handlers,
         force=True,
     )
-CURRENT_VERSION = "1.6.7"
+CURRENT_VERSION = "1.6.9"
 APP_NAME = "Stealth Luma"
 GITHUB_REPO = "T-RVSP/Stealth-Luma"
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/{0}/releases/latest".format(GITHUB_REPO)
@@ -73,9 +73,9 @@ STEALTH_REQUIRED_FILES = (STEALTH_DELETE_CACHE_EXE, STEALTH_USER32_SOURCE)
 APPLIST_MAX_ENTRIES = 168
 STEAM_WAYBACK_CALENDAR_URL = "https://web.archive.org/web/20260000000000*/http://media.steampowered.com/client/"
 DEFAULT_STEAM_DOWNGRADE_URL = (
-    "https://web.archive.org/web/20260313222612if_/https://cdn.origin.steamstatic.com/client/"
+    "https://web.archive.org/web/20260619061028if_/http://media.steampowered.com/client/"
 )
-DEFAULT_STEAM_VERSION_LABEL = "mar. 2 juin 2026"
+DEFAULT_STEAM_VERSION_LABEL = "mer. 10 juin 2026"
 STEAM_CFG_LINES = (
     "BootStrapperInhibitAll=Enable",
     "BootStrapperForceSelfUpdate=False",
@@ -223,11 +223,21 @@ class Game:
         return games
 
 class Profile:
-    def __init__(self, name="default", games=None, steam_id="", source_app_id=""):
+    def __init__(
+        self,
+        name="default",
+        games=None,
+        steam_id="",
+        source_app_id="",
+        linked_game_profiles=None,
+        excluded_game_profiles=None,
+    ):
         self.name = name
         self.games = games if games is not None else []
         self.steam_id = str(steam_id or "")
         self.source_app_id = str(source_app_id or "")
+        self.linked_game_profiles = list(linked_game_profiles or [])
+        self.excluded_game_profiles = list(excluded_game_profiles or [])
 
     def add_game(self, game):
         self.games.append(game)
@@ -255,6 +265,8 @@ class Profile:
             "name": self.name,
             "steam_id": self.steam_id,
             "source_app_id": self.source_app_id,
+            "linked_game_profiles": list(self.linked_game_profiles),
+            "excluded_game_profiles": list(self.excluded_game_profiles),
             "games": [game.to_JSON() for game in self.games],
         }
         with open(self.profile_filepath(path), "w", encoding="utf-8") as outfile:
@@ -270,6 +282,8 @@ class Profile:
             [Game.from_JSON(game) for game in data.get("games", [])],
             data.get("steam_id", ""),
             data.get("source_app_id", ""),
+            data.get("linked_game_profiles", []),
+            data.get("excluded_game_profiles", []),
         )
 
 class ProfileManager:
@@ -342,7 +356,7 @@ class ProfileManager:
             os.remove(filepath)
 
 class Config:
-    def __init__(self, steam_path="", greenluma_path="", no_hook=False, version=CURRENT_VERSION, last_profile="default", check_update=True, use_steamdb=False, manager_msg=False, steam_downgrade_done=False, language="fr"):
+    def __init__(self, steam_path="", greenluma_path="", no_hook=False, version=CURRENT_VERSION, last_profile="default", check_update=True, use_steamdb=False, manager_msg=False, steam_downgrade_done=False, steam_downgrade_url="", language="fr"):
         self.steam_path = steam_path
         self.greenluma_path = greenluma_path
         self.no_hook = no_hook
@@ -352,6 +366,7 @@ class Config:
         self.use_steamdb = use_steamdb
         self.manager_msg = manager_msg
         self.steam_downgrade_done = steam_downgrade_done
+        self.steam_downgrade_url = steam_downgrade_url
         self.language = language
 
     def export_config(self):
@@ -602,6 +617,17 @@ def normalize_steam_downgrade_url(raw_url):
     return "http://web.archive.org/web/{0}if_/{1}".format(timestamp, original)
 
 
+def get_target_steam_downgrade_url():
+    return normalize_steam_downgrade_url(DEFAULT_STEAM_DOWNGRADE_URL)
+
+
+def needs_steam_downgrade(config):
+    steam_path = getattr(config, "steam_path", "") or ""
+    if not is_valid_steam_path(steam_path):
+        return False
+    return not has_steam_cfg(steam_path)
+
+
 def is_steam_running():
     try:
         import psutil
@@ -703,7 +729,7 @@ def perform_steam_downgrade(raw_url):
 
 
 def perform_steam_restore():
-    """Supprime steam.cfg et force la réinstallation de la dernière version officielle."""
+    """Supprime les fichiers mode furtif, steam.cfg et force la mise à jour officielle."""
     steam_exe = get_steam_exe_path()
     steam_dir = get_steam_directory()
 
@@ -712,6 +738,7 @@ def perform_steam_restore():
             "Impossible de fermer Steam. Fermez-le complètement (y compris la zone de notification) puis réessayez."
         )
 
+    remove_stealth_files_from_steam(steam_dir)
     remove_steam_cfg(steam_dir)
     subprocess.Popen(
         [
@@ -772,17 +799,204 @@ def get_steam_saved_accounts(steam_path):
         account_name = _parse_vdf_quoted_value(block, "AccountName")
         persona_name = _parse_vdf_quoted_value(block, "PersonaName")
         display_name = persona_name or account_name or steam_id
+        most_recent = _parse_vdf_quoted_value(block, "MostRecent") == "1"
 
         accounts.append({
             "steam_id": steam_id,
             "account_name": account_name,
             "persona_name": display_name,
+            "most_recent": most_recent,
         })
         seen_ids.add(steam_id)
 
     accounts.sort(key=lambda item: item["persona_name"].lower())
     logging.info("%d compte(s) Steam détecté(s)", len(accounts))
     return accounts
+
+
+def get_default_steam_profile_name(profile_manager, steam_path):
+    """Retourne le pseudo Steam à sélectionner au démarrage de l'application."""
+    if not profile_manager:
+        return ""
+
+    accounts = get_steam_saved_accounts(steam_path)
+    if accounts:
+        ordered = [a for a in accounts if a.get("most_recent")] + [
+            a for a in accounts if not a.get("most_recent")
+        ]
+        for account in ordered:
+            persona_name = account["persona_name"]
+            if persona_name in profile_manager.profiles:
+                profile = profile_manager.profiles[persona_name]
+                if is_steam_account_profile(profile):
+                    return persona_name
+            for profile in profile_manager.profiles.values():
+                if profile.steam_id == account["steam_id"]:
+                    return profile.name
+
+    for profile in sorted(profile_manager.profiles.values(), key=lambda item: item.name.lower()):
+        if is_steam_account_profile(profile):
+            return profile.name
+
+    return ""
+
+
+PROFILE_SELECTOR_CHILD_PREFIX = "   "
+
+
+def get_game_profiles_for_selector(profile_manager):
+    game_profiles = [
+        profile
+        for profile in profile_manager.profiles.values()
+        if is_game_profile(profile)
+    ]
+    game_profiles.sort(key=lambda item: item.name.lower())
+    return game_profiles
+
+
+def merge_linked_profile_games(steam_profile, profile_manager):
+    """Fusionne les jeux/DLC des profils jeux liés (max 168 entrées)."""
+    games = []
+    seen_ids = set()
+    for linked_name in getattr(steam_profile, "linked_game_profiles", []):
+        child = profile_manager.profiles.get(linked_name)
+        if not child or not is_game_profile(child):
+            continue
+        for game in child.games:
+            if game.id in seen_ids:
+                continue
+            seen_ids.add(game.id)
+            games.append(game)
+            if len(games) >= APPLIST_MAX_ENTRIES:
+                return games
+    return games
+
+
+def get_launch_games_for_profile(profile, profile_manager):
+    if is_steam_account_profile(profile):
+        return merge_linked_profile_games(profile, profile_manager)
+    return list(profile.games)
+
+
+def include_game_profile_in_steam(steam_profile, game_profile_name):
+    """Réintègre un profil jeu au lancement Steam (retrait de la liste d'exclusion)."""
+    excluded = getattr(steam_profile, "excluded_game_profiles", None)
+    if excluded is None:
+        steam_profile.excluded_game_profiles = []
+        return
+    if game_profile_name in steam_profile.excluded_game_profiles:
+        steam_profile.excluded_game_profiles.remove(game_profile_name)
+
+
+def exclude_game_profile_from_steam(steam_profile, game_profile_name):
+    """Retire un profil jeu du lancement Steam et mémorise l'exclusion."""
+    if not hasattr(steam_profile, "excluded_game_profiles"):
+        steam_profile.excluded_game_profiles = []
+    if game_profile_name not in steam_profile.excluded_game_profiles:
+        steam_profile.excluded_game_profiles.append(game_profile_name)
+
+    linked = getattr(steam_profile, "linked_game_profiles", [])
+    if game_profile_name in linked:
+        linked.remove(game_profile_name)
+
+
+def ensure_steam_profile_links(profile_manager, steam_path):
+    """Associe automatiquement les profils jeux au profil Steam principal."""
+    steam_name = get_default_steam_profile_name(profile_manager, steam_path)
+    if not steam_name or steam_name not in profile_manager.profiles:
+        return False
+
+    steam_profile = profile_manager.profiles[steam_name]
+    if not is_steam_account_profile(steam_profile):
+        return False
+
+    if not hasattr(steam_profile, "linked_game_profiles"):
+        steam_profile.linked_game_profiles = []
+    if not hasattr(steam_profile, "excluded_game_profiles"):
+        steam_profile.excluded_game_profiles = []
+
+    excluded = set(steam_profile.excluded_game_profiles)
+    changed = False
+    for child in get_game_profiles_for_selector(profile_manager):
+        if child.name in excluded:
+            continue
+        if child.name not in steam_profile.linked_game_profiles:
+            steam_profile.linked_game_profiles.append(child.name)
+            changed = True
+
+    steam_profile.linked_game_profiles.sort(key=str.lower)
+    if changed:
+        steam_profile.export_profile(PROFILES_PATH)
+    return changed
+
+
+def refresh_steam_launch_profiles(profile_manager, steam_path, steam_profile):
+    """Synchronise les profils installés, réintègre les profils retirés, recharge les DLC."""
+    if not is_valid_steam_path(steam_path) or not is_steam_account_profile(steam_profile):
+        return {"linked": 0, "reloaded": 0, "errors": []}
+
+    steam_profile.excluded_game_profiles = []
+    sync_installed_game_profiles(profile_manager, steam_path, load_dlc=False)
+    ensure_steam_profile_links(profile_manager, steam_path)
+
+    reloaded = 0
+    errors = []
+    for linked_name in list(getattr(steam_profile, "linked_game_profiles", [])):
+        child = profile_manager.profiles.get(linked_name)
+        if not child:
+            continue
+        main_game = get_profile_main_game(child, steam_path)
+        if not main_game:
+            continue
+        try:
+            configuration = build_game_configuration(steam_path, main_game.id, main_game.name)
+            apply_game_configuration(child, configuration)
+            reloaded += 1
+        except Exception as err:
+            logging.exception("Impossible de recharger %s : %s", linked_name, err)
+            errors.append(linked_name)
+
+    steam_profile.export_profile(PROFILES_PATH)
+    return {
+        "linked": len(getattr(steam_profile, "linked_game_profiles", [])),
+        "reloaded": reloaded,
+        "errors": errors,
+    }
+
+
+def remove_game_profile_from_steam_links(profile_manager, game_profile_name):
+    """Retire un profil jeu des listes liées des profils Steam."""
+    changed = False
+    for profile in profile_manager.profiles.values():
+        if not is_steam_account_profile(profile):
+            continue
+        linked = getattr(profile, "linked_game_profiles", [])
+        if game_profile_name in linked:
+            linked.remove(game_profile_name)
+            profile.export_profile(PROFILES_PATH)
+            changed = True
+    return changed
+
+
+def get_ordered_profile_names(profile_manager, steam_path=""):
+    """Pseudo Steam en tête, puis profils jeux par ordre alphabétique."""
+    if not profile_manager:
+        return []
+
+    steam_profiles = []
+    game_profiles = []
+    for profile in profile_manager.profiles.values():
+        if is_steam_account_profile(profile):
+            steam_profiles.append(profile)
+        else:
+            game_profiles.append(profile)
+
+    default_steam = get_default_steam_profile_name(profile_manager, steam_path)
+    steam_profiles.sort(
+        key=lambda item: (item.name != default_steam, item.name.lower())
+    )
+    game_profiles.sort(key=lambda item: item.name.lower())
+    return [profile.name for profile in steam_profiles + game_profiles]
 
 
 def sync_profiles_from_steam(profile_manager, steam_path, last_profile=""):
@@ -832,9 +1046,11 @@ def sync_profiles_from_steam(profile_manager, steam_path, last_profile=""):
 
     for profile_name, profile in list(profile_manager.profiles.items()):
         if profile.steam_id and profile.steam_id in active_ids:
-            if profile.games:
-                profile.games = []
-                profile.export_profile(PROFILES_PATH)
+            if not hasattr(profile, "linked_game_profiles"):
+                profile.linked_game_profiles = []
+            if not hasattr(profile, "excluded_game_profiles"):
+                profile.excluded_game_profiles = []
+            continue
 
     for profile_name, profile in list(profile_manager.profiles.items()):
         if profile.steam_id and profile.steam_id not in active_ids:
@@ -898,8 +1114,32 @@ def import_games_into_profiles(profile_manager, games, start_profile_name, steam
     return results
 
 
-def profile_exceeds_applist_limit(profile):
+def profile_exceeds_applist_limit(profile, profile_manager=None):
+    if is_steam_account_profile(profile) and profile_manager is not None:
+        return len(merge_linked_profile_games(profile, profile_manager)) > APPLIST_MAX_ENTRIES
     return bool(profile) and len(profile.games) > APPLIST_MAX_ENTRIES
+
+
+def sync_installed_game_profiles(profile_manager, steam_path, load_dlc=False):
+    """Crée un profil pour chaque jeu installé qui n'en a pas encore."""
+    if not is_valid_steam_path(steam_path):
+        return []
+
+    created = []
+    for game in get_installed_base_games(steam_path):
+        if find_game_profile(profile_manager, game) or profile_manager.profile_exists(game.name):
+            continue
+        if not profile_manager.create_profile(game.name, games=[game], source_app_id=game.id):
+            continue
+        created.append(game)
+        if load_dlc:
+            try:
+                configuration = build_game_configuration(steam_path, game.id, game.name)
+                apply_game_configuration(profile_manager.profiles[game.name], configuration)
+            except Exception as err:
+                logging.exception("Impossible de charger la configuration de %s : %s", game.name, err)
+
+    return created
 
 
 def is_steam_account_profile(profile):
@@ -908,6 +1148,22 @@ def is_steam_account_profile(profile):
 
 def is_game_profile(profile):
     return bool(profile) and not profile.steam_id
+
+
+def is_installed_game_profile(profile, steam_path=None):
+    """Profil lié à un jeu installé (créé automatiquement)."""
+    if not profile or not profile.source_app_id:
+        return False
+    path = steam_path or ""
+    if is_valid_steam_path(path):
+        return str(profile.source_app_id) in scan_installed_steam_apps(path)
+    return True
+
+
+def can_delete_profile(profile, steam_path=None):
+    if not is_game_profile(profile):
+        return False
+    return not is_installed_game_profile(profile, steam_path)
 
 
 def get_installed_base_games(steam_path):
@@ -1344,6 +1600,18 @@ def restore_steam_after_uninstall(steam_dir=None):
         logging.warning("Restauration Steam ignorée : chemin Steam introuvable")
         return False
 
+    remove_stealth_files_from_steam(steam_dir)
+    remove_steam_cfg(steam_dir)
+    return True
+
+
+def remove_stealth_files_from_steam(steam_dir=None):
+    """Retire user32.dll injecté, AppList et AppListManager.exe du dossier Steam."""
+    steam_dir = steam_dir or get_steam_directory()
+    if not steam_dir or not os.path.isdir(steam_dir):
+        logging.warning("Nettoyage mode furtif ignoré : chemin Steam introuvable")
+        return False
+
     restore_steam_user32(steam_dir)
 
     applist_path = get_steam_applist_path(steam_dir)
@@ -1356,7 +1624,6 @@ def restore_steam_after_uninstall(steam_dir=None):
         os.remove(manager_path)
         logging.info("%s supprimé du dossier Steam", STEALTH_APPLIST_MANAGER)
 
-    remove_steam_cfg(steam_dir)
     return True
 
 

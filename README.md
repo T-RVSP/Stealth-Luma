@@ -3,15 +3,15 @@
 Gestionnaire graphique pour **Stealth Luma**, déverrouilleur Steam en **mode furtif**.  
 Il prépare l’AppList, gère vos profils (comptes Steam et jeux) et lance Steam avec les fichiers requis.
 
-**Développé par [ShyninG](https://github.com/T-RVSP)** — Version **1.6.7**
+**Développé par [ShyninG](https://github.com/T-RVSP)** — Version **1.6.9**
 
 ---
 
 ## Installation
 
-**[Télécharger Stealth Luma 1.6.7](https://github.com/T-RVSP/Stealth-Luma/releases/latest)**
+**[Télécharger Stealth Luma 1.6.9](https://github.com/T-RVSP/Stealth-Luma/releases/latest)**
 
-1. Téléchargez `Stealth-Luma-Setup-1.6.7.exe` depuis la page [Releases](https://github.com/T-RVSP/Stealth-Luma/releases)
+1. Téléchargez `Stealth-Luma-Setup-1.6.9.exe` depuis la page [Releases](https://github.com/T-RVSP/Stealth-Luma/releases)
 2. Lancez l’installateur et choisissez la langue (français ou anglais)
 3. Ouvrez **Stealth Luma** depuis le menu Démarrer ou le raccourci bureau
 

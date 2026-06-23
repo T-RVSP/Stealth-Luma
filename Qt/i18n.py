@@ -11,11 +11,18 @@ _STRINGS = {
         "profile": "Profil",
         "active_games": "Jeux/DLC Actif",
         "family_mode": "Mode Famille Steam",
+        "steam_child_profiles": "Profils jeux",
+        "steam_launch_profiles": "Profils actifs",
+        "link_profile": "+ Profil jeu",
+        "link_profile_btn": "Ajouter",
+        "select_game_profile_to_link": "Sélectionnez un profil jeu à inclure au lancement.",
+        "all_game_profiles_linked": "Tous les profils jeux sont déjà inclus.",
+        "steam_no_launch_entries": "Aucun jeu à lancer. Ajoutez des profils jeux au profil Steam.",
         "active_games_over_limit": " - dépasse la limite de {0}",
         "active_games_at_limit": " - limite atteinte ({0})",
         "active_games_count": " ({0}/{1})",
         "create_profile": "+ Profil",
-        "create_profile_tooltip": "Créer un profil à partir d'un jeu installé",
+        "create_profile_tooltip": "Créer un profil manuel pour un jeu non détecté",
         "delete_profile": "Suppr.",
         "delete_profile_tooltip": "Supprimer le profil sélectionné",
         "remove": "Retirer",
@@ -30,7 +37,9 @@ _STRINGS = {
         "editor_add_row_tooltip": "Ajouter une ligne",
         "cancel": "Annuler",
         "ok": "OK",
-        "installed_game": "Jeu installé",
+        "installed_game": "Nom du profil",
+        "profile_name_required": "Indiquez un nom de profil.",
+        "profile_name_ph": "Ex. Mon jeu custom",
         "create_profile_btn": "Créer le profil",
         "save": "Enregistrer",
         "steam_path": "Chemin Steam",
@@ -63,16 +72,20 @@ _STRINGS = {
         "restore": "Restaurer",
         "download_csrin": "Télécharger sur cs.rin.ru",
         "select_zip": "Sélectionner le ZIP téléchargé",
-        "load": "Charger",
-        "importing": "Import…",
-        "load_tooltip_default": "Charger la configuration du jeu sélectionné (jeu + DLC)",
-        "load_tooltip_select_game": "Sélectionnez un jeu dans la liste pour charger sa configuration",
-        "load_tooltip_profile": "Charger la configuration du profil « {0} » (jeu + DLC)",
-        "load_tooltip_no_profile": "Aucun profil pour « {0} » - créez-le avec + Profil",
+        "load": "Recharger les DLC",
+        "importing": "Rechargement…",
+        "load_tooltip_default": "Recharger les DLC du jeu sélectionné",
+        "load_tooltip_select_game": "Sélectionnez un jeu dans la liste pour recharger ses DLC",
+        "load_tooltip_profile": "Recharger les DLC du profil « {0} »",
+        "load_tooltip_no_profile": "Aucun profil pour « {0} »",
+        "load_tooltip_steam": "Réintégrer tous les profils jeux, recharger leurs DLC et actualiser la liste combinée",
+        "steam_reloading": "Rechargement des profils jeux…",
+        "steam_reload_done": "{0} profil(s) jeu rechargé(s), {1} entrée(s) au total (max {2}).",
+        "steam_reload_partial": "Rechargement partiel : {0} erreur(s) sur {1}.",
         "settings_paths": "Chemins",
         "settings_steam_version": "Version Steam",
         "settings_app": "Application",
-        "steam_version_label": "mar. 2 juin 2026",
+        "steam_version_label": "mer. 10 juin 2026",
         "greenluma_not_found": "{0} introuvable",
         "greenluma_install_text": (
             "Les fichiers mode furtif sont absents du dossier GLinject "
@@ -97,7 +110,7 @@ _STRINGS = {
         "steam_profile_no_delete": "Le profil du compte Steam ne peut pas être supprimé.",
         "confirm_delete_profile": "Supprimer le profil « {0} » et tous ses jeux ?",
         "select_game_not_dlc": "Sélectionnez un jeu (pas un DLC) dans la liste.",
-        "no_profile_for_game": "Aucun profil pour « {0} ».\nCréez-le avec + Profil.",
+        "no_profile_for_game": "Aucun profil pour « {0} ».",
         "loading_profile": "Chargement de « {0} »…",
         "cannot_load_config": "Impossible de charger la configuration. Consultez errors.log.",
         "profile_ready": "Profil « {0} » prêt : {1} entrée(s) (jeu + {2} DLC).",
@@ -105,8 +118,10 @@ _STRINGS = {
         "loading_installed_games": "Chargement des jeux installés…",
         "all_games_have_profile": "Tous les jeux installés ont déjà un profil.",
         "steam_profile_family_only": (
-            "Le profil Steam est réservé au mode Famille.\n"
-            "Créez un profil jeu avec + Profil pour ajouter des titres."
+            "Le profil Steam regroupe les profils jeux pour lancer plusieurs titres "
+            "et DLC en une fois (max 168).\n"
+            "Utilisez Recharger les DLC pour réintégrer les jeux retirés, "
+            "ou + Profil pour un jeu non détecté."
         ),
         "profile_full": (
             "Ce profil a atteint la limite de {0} entrées.\n"
@@ -116,17 +131,24 @@ _STRINGS = {
         "entries_added": "{0} entrée(s) ajoutée(s) au profil.",
         "entries_skipped": "\n\n{0} entrée(s) ignorée(s) (profil plein, max {1}).",
         "confirm_steam_restore": (
-            "Steam va être fermé. steam.cfg sera supprimé et la dernière version officielle "
-            "sera téléchargée.\n\n"
+            "Steam va être fermé. Les fichiers mode furtif seront retirés "
+            "(user32.dll, AppList, AppListManager.exe), steam.cfg sera supprimé "
+            "et la dernière version officielle sera téléchargée.\n\n"
             "Attendez que la fenêtre de mise à jour Steam se ferme toute seule avant de relancer Steam.\n\n"
             "Continuer ?"
         ),
         "steam_restore_failed": "Restauration Steam échouée.\n\n{0}",
         "steam_restore_ok": (
             "Restauration lancée.\n\n"
+            "• Fichiers mode furtif retirés (user32.dll, AppList, AppListManager.exe).\n"
             "• steam.cfg a été supprimé.\n"
             "• Attendez que la fenêtre de mise à jour Steam se ferme toute seule.\n"
             "• Relancez ensuite Steam normalement."
+        ),
+        "steam_downgrade_required": (
+            "Steam n'est pas sur la version cible.\n\n"
+            "La mise à jour est en cours (steam.cfg + version {0}).\n"
+            "Attendez la fin de la mise à jour Steam avant de lancer."
         ),
         "no_steam_account": "Aucun compte Steam sélectionné.",
         "profile_too_many_entries": (
@@ -157,11 +179,18 @@ _STRINGS = {
         "profile": "Profile",
         "active_games": "Active Games/DLC",
         "family_mode": "Steam Family Mode",
+        "steam_child_profiles": "Game profiles",
+        "steam_launch_profiles": "Active profiles",
+        "link_profile": "+ Game profile",
+        "link_profile_btn": "Add",
+        "select_game_profile_to_link": "Select a game profile to include in the launch.",
+        "all_game_profiles_linked": "All game profiles are already included.",
+        "steam_no_launch_entries": "Nothing to launch. Add game profiles to the Steam profile.",
         "active_games_over_limit": " - exceeds limit of {0}",
         "active_games_at_limit": " - limit reached ({0})",
         "active_games_count": " ({0}/{1})",
         "create_profile": "+ Profile",
-        "create_profile_tooltip": "Create a profile from an installed game",
+        "create_profile_tooltip": "Create a manual profile for an undetected game",
         "delete_profile": "Del.",
         "delete_profile_tooltip": "Delete the selected profile",
         "remove": "Remove",
@@ -176,7 +205,9 @@ _STRINGS = {
         "editor_add_row_tooltip": "Add a row",
         "cancel": "Cancel",
         "ok": "OK",
-        "installed_game": "Installed game",
+        "installed_game": "Profile name",
+        "profile_name_required": "Enter a profile name.",
+        "profile_name_ph": "e.g. My custom game",
         "create_profile_btn": "Create profile",
         "save": "Save",
         "steam_path": "Steam path",
@@ -209,16 +240,20 @@ _STRINGS = {
         "restore": "Restore",
         "download_csrin": "Download on cs.rin.ru",
         "select_zip": "Select downloaded ZIP",
-        "load": "Load",
-        "importing": "Import…",
-        "load_tooltip_default": "Load configuration for the selected game (game + DLC)",
-        "load_tooltip_select_game": "Select a game in the list to load its configuration",
-        "load_tooltip_profile": "Load profile configuration for « {0} » (game + DLC)",
-        "load_tooltip_no_profile": "No profile for « {0} » - create one with + Profile",
+        "load": "Reload DLC",
+        "importing": "Reloading…",
+        "load_tooltip_default": "Reload DLC for the selected game",
+        "load_tooltip_select_game": "Select a game in the list to reload its DLC",
+        "load_tooltip_profile": "Reload DLC for profile « {0} »",
+        "load_tooltip_no_profile": "No profile for « {0} »",
+        "load_tooltip_steam": "Re-include all game profiles, reload their DLC and refresh the combined list",
+        "steam_reloading": "Reloading game profiles…",
+        "steam_reload_done": "{0} game profile(s) reloaded, {1} total entries (max {2}).",
+        "steam_reload_partial": "Partial reload: {0} error(s) out of {1}.",
         "settings_paths": "Paths",
         "settings_steam_version": "Steam version",
         "settings_app": "Application",
-        "steam_version_label": "Tue. Jun 2, 2026",
+        "steam_version_label": "Wed. Jun 10, 2026",
         "greenluma_not_found": "{0} not found",
         "greenluma_install_text": (
             "Stealth mode files are missing from the GLinject folder "
@@ -242,7 +277,7 @@ _STRINGS = {
         "steam_profile_no_delete": "The Steam account profile cannot be deleted.",
         "confirm_delete_profile": "Delete profile « {0} » and all its games?",
         "select_game_not_dlc": "Select a game (not a DLC) from the list.",
-        "no_profile_for_game": "No profile for « {0} ».\nCreate one with + Profile.",
+        "no_profile_for_game": "No profile for « {0} ».",
         "loading_profile": "Loading « {0} »…",
         "cannot_load_config": "Unable to load configuration. See errors.log.",
         "profile_ready": "Profile « {0} » ready: {1} entry/entries (game + {2} DLC).",
@@ -250,8 +285,10 @@ _STRINGS = {
         "loading_installed_games": "Loading installed games…",
         "all_games_have_profile": "All installed games already have a profile.",
         "steam_profile_family_only": (
-            "The Steam profile is reserved for Family Mode.\n"
-            "Create a game profile with + Profile to add titles."
+            "The Steam profile groups game profiles to launch multiple titles "
+            "and DLC at once (max 168).\n"
+            "Use Reload DLC to re-include removed games, "
+            "or + Profile for an undetected game."
         ),
         "profile_full": (
             "This profile has reached the limit of {0} entries.\n"
@@ -261,17 +298,24 @@ _STRINGS = {
         "entries_added": "{0} entry/entries added to profile.",
         "entries_skipped": "\n\n{0} entry/entries skipped (profile full, max {1}).",
         "confirm_steam_restore": (
-            "Steam will be closed. steam.cfg will be removed and the latest official version "
-            "will be downloaded.\n\n"
+            "Steam will be closed. Stealth mode files will be removed "
+            "(user32.dll, AppList, AppListManager.exe), steam.cfg will be removed "
+            "and the latest official version will be downloaded.\n\n"
             "Wait for the Steam update window to close on its own before relaunching Steam.\n\n"
             "Continue?"
         ),
         "steam_restore_failed": "Steam restore failed.\n\n{0}",
         "steam_restore_ok": (
             "Restore started.\n\n"
+            "• Stealth mode files removed (user32.dll, AppList, AppListManager.exe).\n"
             "• steam.cfg has been removed.\n"
             "• Wait for the Steam update window to close on its own.\n"
             "• Then launch Steam normally."
+        ),
+        "steam_downgrade_required": (
+            "Steam is not on the target version.\n\n"
+            "Update in progress (steam.cfg + version {0}).\n"
+            "Wait for the Steam update to finish before launching."
         ),
         "no_steam_account": "No Steam account selected.",
         "profile_too_many_entries": (
