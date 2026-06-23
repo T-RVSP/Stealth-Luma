@@ -2130,15 +2130,31 @@ def check_for_application_update():
 
 def download_setup_installer(download_url, version):
     """Télécharge l'installateur de mise à jour vers le dossier temporaire."""
+    if not download_url:
+        raise ValueError("URL de téléchargement vide")
+
     filename = "{0}{1}.exe".format(SETUP_INSTALLER_PREFIX, version)
     dest = os.path.join(tempfile.gettempdir(), filename)
-    headers = {"User-Agent": "{0}/{1}".format(APP_NAME, CURRENT_VERSION)}
-    with requests.get(download_url, headers=headers, stream=True, timeout=120) as response:
+    headers = {
+        "User-Agent": "{0}/{1}".format(APP_NAME, CURRENT_VERSION),
+        "Accept": "application/octet-stream",
+    }
+    with requests.get(
+        download_url,
+        headers=headers,
+        stream=True,
+        timeout=120,
+        allow_redirects=True,
+    ) as response:
         response.raise_for_status()
         with open(dest, "wb") as outfile:
             for chunk in response.iter_content(chunk_size=65536):
                 if chunk:
                     outfile.write(chunk)
+
+    if not os.path.isfile(dest) or os.path.getsize(dest) < 1024:
+        raise OSError("Fichier téléchargé invalide ou incomplet")
+
     logging.info("Installateur téléchargé : %s", dest)
     return dest
 

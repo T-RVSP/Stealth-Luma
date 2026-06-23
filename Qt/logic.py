@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self.steam_restore_thread = None
         self.update_check_thread = None
         self.update_download_thread = None
+        self._pending_update_info = None
         self._greenluma_retry_callback = None
         self._settings_was_open = False
         self._tray_available = False
@@ -1408,6 +1409,7 @@ class MainWindow(QMainWindow):
     def _on_update_check_finished(self, info):
         if not info:
             return
+        self._pending_update_info = dict(info)
         ui = self.main_window
         ui.popup_btn1.setText(i18n.tr("update_download"))
         ui.popup_btn2.setText(i18n.tr("update_later"))
@@ -1417,16 +1419,26 @@ class MainWindow(QMainWindow):
                 info.get("version", "?"),
                 core.CURRENT_VERSION,
             ),
-            lambda: self._start_update_download(info),
+            self._start_update_download,
             self.hide_popup,
         )
 
-    def _start_update_download(self, info):
-        self.hide_popup()
+    def _start_update_download(self):
+        info = self._pending_update_info
+        if not info or not info.get("download_url"):
+            self.show_popup(i18n.tr("update_download_failed", "URL de téléchargement introuvable."))
+            return
+
         version = info.get("version", "")
+        self.main_window.popup_btn1.setText(i18n.tr("update_download"))
+        self.main_window.popup_btn2.setText(i18n.tr("update_later"))
         self.show_popup(i18n.tr("update_downloading", version))
         self.main_window.popup_btn1.setEnabled(False)
         self.main_window.popup_btn2.setEnabled(False)
+
+        if self.update_download_thread and self.update_download_thread.isRunning():
+            return
+
         self.update_download_thread = UpdateDownloadThread(
             info.get("download_url", ""),
             version,
@@ -1439,12 +1451,15 @@ class MainWindow(QMainWindow):
         self.main_window.popup_btn2.setEnabled(True)
         if isinstance(result, Exception):
             core.logging.exception(result)
+            self.main_window.popup_btn1.setText(i18n.tr("ok"))
+            self.main_window.popup_btn2.setText(i18n.tr("cancel"))
             self.show_popup(i18n.tr("update_download_failed", result))
             return
-        self.show_popup(
-            i18n.tr("update_launching"),
-            lambda: self._launch_downloaded_update(result),
-        )
+
+        self.show_popup(i18n.tr("update_launching"))
+        self.main_window.popup_btn1.setEnabled(False)
+        self.main_window.popup_btn2.setEnabled(False)
+        QTimer.singleShot(200, lambda path=result: self._launch_downloaded_update(path))
 
     def _launch_downloaded_update(self, installer_path):
         try:
@@ -1456,12 +1471,12 @@ class MainWindow(QMainWindow):
         self.quit_application()
 
     def show_popup(self, message, ok_callback=None, cx_callback=None):
+        popup = self.main_window.generic_popup
         self.main_window.popup_text.setText(message)
         if ok_callback is None:
             ok_callback = self.hide_popup
         if cx_callback is None:
             cx_callback = self.hide_popup
-        # Remove old callbacks
         try:
             self.main_window.popup_btn1.clicked.disconnect()
         except TypeError:
@@ -1472,13 +1487,14 @@ class MainWindow(QMainWindow):
             pass
         self.main_window.popup_btn1.clicked.connect(ok_callback)
         self.main_window.popup_btn2.clicked.connect(cx_callback)
+        self.main_window.popup_btn1.setEnabled(True)
+        self.main_window.popup_btn2.setEnabled(True)
 
-        if self.main_window.generic_popup.isHidden():
-            self._layout_builder.position_overlay(
-                self.main_window.generic_popup,
-                self.centralWidget(),
-            )
-        self.toggle_widget(self.main_window.generic_popup)
+        if popup.isHidden():
+            self._layout_builder.position_overlay(popup, self.centralWidget())
+        popup.setEnabled(True)
+        popup.setHidden(False)
+        self._sync_overlay_stack()
         self.main_window.popup_btn1.setFocus()
 
     def is_steam_running(self):
