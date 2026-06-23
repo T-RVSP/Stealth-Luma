@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self.extract_greenluma_thread = None
         self.steam_downgrade_thread = None
         self.installed_profiles_sync_thread = None
+        self._installed_profiles_sync_timer = None
         self.reload_steam_profiles_thread = None
         self.steam_restore_thread = None
         self.update_check_thread = None
@@ -145,6 +146,7 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+        self._start_installed_profiles_sync()
 
     def quit_application(self):
         try:
@@ -167,6 +169,12 @@ class MainWindow(QMainWindow):
             self.setWindowState(Qt.WindowNoState)
             self.minimize_to_tray()
             return
+        if (
+            event.type() == QEvent.ActivationChange
+            and self.isActiveWindow()
+            and not self._in_tray
+        ):
+            self._start_installed_profiles_sync()
         super().changeEvent(event)
 
     def closeEvent(self, event):
@@ -237,6 +245,10 @@ class MainWindow(QMainWindow):
 
         self._apply_ui_language()
         self._sync_overlay_stack()
+        self._installed_profiles_sync_timer = QTimer(self)
+        self._installed_profiles_sync_timer.setInterval(30000)
+        self._installed_profiles_sync_timer.timeout.connect(self._start_installed_profiles_sync)
+        self._installed_profiles_sync_timer.start()
         QTimer.singleShot(800, self.maybe_check_for_updates)
 
     def _apply_ui_language(self):
@@ -475,16 +487,35 @@ class MainWindow(QMainWindow):
             logging.exception(result)
             return
 
-        if not result:
+        created = result.get("created", []) if isinstance(result, dict) else (result or [])
+        removed = result.get("removed", []) if isinstance(result, dict) else []
+        links_changed = core.ensure_steam_profile_links(profile_manager, core.config.steam_path)
+        if not created and not removed and not links_changed:
             return
 
-        core.ensure_steam_profile_links(profile_manager, core.config.steam_path)
+        current = self._get_selected_profile_name()
+        if current in removed:
+            with core.get_config() as config:
+                default_name = core.get_default_steam_profile_name(
+                    profile_manager, core.config.steam_path
+                )
+                if default_name and default_name in profile_manager.profiles:
+                    config.last_profile = default_name
+                elif profile_manager.profiles:
+                    config.last_profile = sorted(
+                        profile_manager.profiles.keys(), key=str.lower
+                    )[0]
+                else:
+                    config.last_profile = ""
+
         self.refresh_profile_selector()
         current = self._get_selected_profile_name()
         if current in profile_manager.profiles:
             profile = profile_manager.profiles[current]
             self.show_profile_games(profile)
             self.update_profile_toolbar(profile)
+            if core.is_steam_account_profile(profile):
+                self.sync_applist_for_profile(profile)
 
     def _on_profile_selector_changed(self, index):
         if index < 0:
@@ -1026,6 +1057,7 @@ class MainWindow(QMainWindow):
             if linked_names:
                 profile.export_profile()
                 self.show_profile_games(profile)
+                self.sync_applist_for_profile(profile)
             return
 
         for item in items:
@@ -1208,11 +1240,11 @@ class MainWindow(QMainWindow):
         profile = profile_manager.profiles[profile_name]
 
         launch_games = core.get_launch_games_for_profile(profile, profile_manager)
-        if not launch_games:
-            self.show_popup(i18n.tr("steam_no_launch_entries"))
+        if not launch_games and not core.is_steam_account_profile(profile):
+            self.show_popup(i18n.tr("profile_no_entries"))
             return
 
-        if core.profile_exceeds_applist_limit(profile, profile_manager):
+        if launch_games and core.profile_exceeds_applist_limit(profile, profile_manager):
             self.show_popup(
                 i18n.tr(
                     "profile_too_many_entries",
@@ -1245,8 +1277,7 @@ class MainWindow(QMainWindow):
 
         try:
             core.run_delete_steam_app_cache(gl_path)
-            if launch_games:
-                core.createFiles(launch_games)
+            core.createFiles(launch_games)
             core.deploy_stealth_files_to_steam(glinject_path=gl_path)
             self._stealth_user32_active = True
             core.launch_steam()
@@ -1596,12 +1627,12 @@ class SyncInstalledGameProfilesThread(QThread):
 
     def run(self):
         try:
-            created = core.sync_installed_game_profiles(
+            result = core.sync_installed_game_profiles(
                 profile_manager,
                 self.steam_path,
                 load_dlc=True,
             )
-            self.signal.emit(created)
+            self.signal.emit(result)
         except Exception as err:
             self.signal.emit(err)
 

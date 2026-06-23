@@ -915,8 +915,24 @@ def ensure_steam_profile_links(profile_manager, steam_path):
     if not hasattr(steam_profile, "excluded_game_profiles"):
         steam_profile.excluded_game_profiles = []
 
-    excluded = set(steam_profile.excluded_game_profiles)
+    valid_game_names = {
+        child.name for child in get_game_profiles_for_selector(profile_manager)
+    }
     changed = False
+
+    linked = getattr(steam_profile, "linked_game_profiles", [])
+    pruned_linked = [name for name in linked if name in valid_game_names]
+    if pruned_linked != linked:
+        steam_profile.linked_game_profiles = pruned_linked
+        changed = True
+
+    excluded = getattr(steam_profile, "excluded_game_profiles", [])
+    pruned_excluded = [name for name in excluded if name in valid_game_names]
+    if pruned_excluded != excluded:
+        steam_profile.excluded_game_profiles = pruned_excluded
+        changed = True
+
+    excluded = set(steam_profile.excluded_game_profiles)
     for child in get_game_profiles_for_selector(profile_manager):
         if child.name in excluded:
             continue
@@ -1120,11 +1136,34 @@ def profile_exceeds_applist_limit(profile, profile_manager=None):
     return bool(profile) and len(profile.games) > APPLIST_MAX_ENTRIES
 
 
-def sync_installed_game_profiles(profile_manager, steam_path, load_dlc=False):
-    """Crée un profil pour chaque jeu installé qui n'en a pas encore."""
+def remove_uninstalled_game_profiles(profile_manager, steam_path):
+    """Supprime les profils auto-créés dont le jeu n'est plus installé."""
     if not is_valid_steam_path(steam_path):
         return []
 
+    installed_ids = set(scan_installed_steam_apps(steam_path).keys())
+    removed = []
+    for profile_name, profile in list(profile_manager.profiles.items()):
+        if is_steam_account_profile(profile):
+            continue
+        if not profile.source_app_id:
+            continue
+        if str(profile.source_app_id) in installed_ids:
+            continue
+        profile_manager.remove_profile(profile_name)
+        remove_game_profile_from_steam_links(profile_manager, profile_name)
+        removed.append(profile_name)
+
+    removed.sort(key=str.lower)
+    return removed
+
+
+def sync_installed_game_profiles(profile_manager, steam_path, load_dlc=False):
+    """Crée ou retire les profils liés aux jeux installés sur Steam."""
+    if not is_valid_steam_path(steam_path):
+        return {"created": [], "removed": []}
+
+    removed = remove_uninstalled_game_profiles(profile_manager, steam_path)
     created = []
     for game in get_installed_base_games(steam_path):
         if find_game_profile(profile_manager, game) or profile_manager.profile_exists(game.name):
@@ -1139,7 +1178,7 @@ def sync_installed_game_profiles(profile_manager, steam_path, load_dlc=False):
             except Exception as err:
                 logging.exception("Impossible de charger la configuration de %s : %s", game.name, err)
 
-    return created
+    return {"created": created, "removed": removed}
 
 
 def is_steam_account_profile(profile):
